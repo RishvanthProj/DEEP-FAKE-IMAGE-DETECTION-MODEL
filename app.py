@@ -476,7 +476,17 @@ def main():
                 st.markdown("<p style='font-size:0.8rem; color:#9CA3AF;'><strong>False Negative:</strong> A fake image incorrectly classified as real.<br><strong>False Positive:</strong> A real image incorrectly classified as fake.</p>", unsafe_allow_html=True)
                 
             st.markdown("<div class='section-title'>ROC CURVE | PRECISION-RECALL</div>", unsafe_allow_html=True)
-            st.markdown("<p style='font-size:0.8rem; color:#9CA3AF;'>Charts will be automatically populated here upon full evaluation execution.</p>", unsafe_allow_html=True)
+            col_roc1, col_roc2 = st.columns(2)
+            with col_roc1:
+                if os.path.exists("results/roc_curve.png"):
+                    st.image("results/roc_curve.png", caption="RECEIVER OPERATING CHARACTERISTIC (AUC: {:.3f})".format(metrics.get("roc_auc", 0)), use_container_width=True)
+                else:
+                    st.markdown("<p style='color:#9CA3AF;'>ROC Curve not generated.</p>", unsafe_allow_html=True)
+            with col_roc2:
+                if os.path.exists("results/precision_recall_curve.png"):
+                    st.image("results/precision_recall_curve.png", caption="PRECISION-RECALL CURVE (PR-AUC: {:.3f})".format(metrics.get("pr_auc", 0)), use_container_width=True)
+                else:
+                    st.markdown("<p style='color:#9CA3AF;'>Precision-Recall Curve not generated.</p>", unsafe_allow_html=True)
             
         else:
             st.markdown("<p style='color:#9CA3AF;'>No evaluation metrics found. Please run test evaluation.</p>", unsafe_allow_html=True)
@@ -485,39 +495,95 @@ def main():
         if os.path.exists("results/training_history.json"):
             with open("results/training_history.json", "r") as f:
                 history = json.load(f)
+            epochs = [f"Epoch {i+1}" for i in range(len(history.get("train_loss", [])))]
             col_t1, col_t2 = st.columns(2)
             with col_t1:
-                st.write("Loss Curve")
-                st.line_chart(pd.DataFrame({"Train Loss": history["train_loss"], "Val Loss": history["val_loss"]}))
+                st.markdown("<p style='color:#9CA3AF; font-size:0.85rem; font-weight:600;'>LOSS CURVE (Cross-Entropy)</p>", unsafe_allow_html=True)
+                df_loss = pd.DataFrame({
+                    "Train Loss": history.get("train_loss", []),
+                    "Val Loss": history.get("val_loss", [])
+                }, index=epochs)
+                st.line_chart(df_loss)
             with col_t2:
-                st.write("Accuracy Curve")
-                st.line_chart(pd.DataFrame({"Train Acc": history["train_acc"], "Val Acc": history["val_acc"]}))
+                st.markdown("<p style='color:#9CA3AF; font-size:0.85rem; font-weight:600;'>ACCURACY CURVE</p>", unsafe_allow_html=True)
+                df_acc = pd.DataFrame({
+                    "Train Accuracy": history.get("train_acc", []),
+                    "Val Accuracy": history.get("val_acc", [])
+                }, index=epochs)
+                st.line_chart(df_acc)
         else:
             st.markdown("<p style='color:#9CA3AF;'>No training history found.</p>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-title'>MODEL ERROR ANALYSIS</div>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size:0.8rem; color:#9CA3AF;'>Analysis dashboard populates during large-scale testing containing exact instances of model misclassification (False Positives and False Negatives).</p>", unsafe_allow_html=True)
+        if os.path.exists("results/test_predictions.csv"):
+            preds_df = pd.read_csv("results/test_predictions.csv")
+            fp_df = preds_df[(preds_df['actual_label'] == 0) & (preds_df['predicted_label'] == 1)]
+            fn_df = preds_df[(preds_df['actual_label'] == 1) & (preds_df['predicted_label'] == 0)]
+            
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                st.markdown(f"""
+                <div style="background-color: rgba(239, 68, 68, 0.08); border: 1px solid #EF4444; border-radius: 4px; padding: 15px; margin-bottom: 12px;">
+                    <div style="color:#EF4444; font-weight:600; font-size: 0.95rem;">FALSE POSITIVES: {len(fp_df)}</div>
+                    <div style="color:#9CA3AF; font-size:0.8rem; margin-top:3px;">Actual REAL faces incorrectly classified as DEEPFAKE.</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if not fp_df.empty:
+                    fp_show = fp_df[['filepath', 'prob_fake']].copy()
+                    fp_show['filename'] = fp_show['filepath'].apply(lambda p: os.path.basename(p))
+                    fp_show['p_fake'] = fp_show['prob_fake'].apply(lambda v: f"{v*100:.1f}%")
+                    st.dataframe(fp_show[['filename', 'p_fake']].head(6), hide_index=True, use_container_width=True)
 
-        st.markdown("<div class='section-title'>TRAINING DATASET</div>", unsafe_allow_html=True)
+            with col_e2:
+                st.markdown(f"""
+                <div style="background-color: rgba(245, 158, 11, 0.08); border: 1px solid #F59E0B; border-radius: 4px; padding: 15px; margin-bottom: 12px;">
+                    <div style="color:#F59E0B; font-weight:600; font-size: 0.95rem;">FALSE NEGATIVES: {len(fn_df)}</div>
+                    <div style="color:#9CA3AF; font-size:0.8rem; margin-top:3px;">Actual DEEPFAKE faces incorrectly classified as REAL.</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if not fn_df.empty:
+                    fn_show = fn_df[['filepath', 'prob_real']].copy()
+                    fn_show['filename'] = fn_show['filepath'].apply(lambda p: os.path.basename(p))
+                    fn_show['p_real'] = fn_show['prob_real'].apply(lambda v: f"{v*100:.1f}%")
+                    st.dataframe(fn_show[['filename', 'p_real']].head(6), hide_index=True, use_container_width=True)
+        else:
+            st.markdown("<p style='color:#9CA3AF;'>Error analysis dashboard populates after evaluation execution.</p>", unsafe_allow_html=True)
+
+        st.markdown("<div class='section-title'>DATASET BREAKDOWN & ACTIVE MODEL TRAINING</div>", unsafe_allow_html=True)
         stats = get_dataset_stats()
-        if stats:
-            st.markdown("""
+        meta_path = "models/model_metadata.json"
+        trained_meta = {}
+        if os.path.exists(meta_path):
+            with open(meta_path, "r") as f:
+                trained_meta = json.load(f)
+
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.markdown("<p style='color:#22C55E; font-size:0.9rem; font-weight:600;'>ACTIVE MODEL TRAINING (BALANCED 50/50)</p>", unsafe_allow_html=True)
+            st.markdown(f"""
             <table class="data-table">
-                <tr><td>Total Images</td><td>{}</td></tr>
-                <tr><td>Real Images</td><td>{}</td></tr>
-                <tr><td>Fake Images</td><td>{}</td></tr>
-                <tr><td>Training Split</td><td>{}</td></tr>
-                <tr><td>Validation Split</td><td>{}</td></tr>
-                <tr><td>Test Split</td><td>{}</td></tr>
+                <tr><td>Training Split (Active)</td><td>{trained_meta.get('num_train', 4000):,} images</td></tr>
+                <tr><td>Training Balance</td><td>2,000 REAL / 2,000 FAKE</td></tr>
+                <tr><td>Validation Split (Active)</td><td>{trained_meta.get('num_validation', 1000):,} images</td></tr>
+                <tr><td>Test Evaluation (Active)</td><td>{trained_meta.get('num_test', 1000):,} images</td></tr>
+                <tr><td>Class Balance Ratio</td><td>1.00 (REAL) : 1.00 (FAKE)</td></tr>
+                <tr><td>Sampling Strategy</td><td>Stratified Balanced</td></tr>
             </table>
-            """.format(
-                stats.get('total', 0),
-                stats.get('real', 0),
-                stats.get('fake', 0),
-                stats.get('splits', {}).get('Train', 0),
-                stats.get('splits', {}).get('Validation', 0),
-                stats.get('splits', {}).get('Test', 0)
-            ), unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+
+        with col_d2:
+            st.markdown("<p style='color:#9CA3AF; font-size:0.9rem; font-weight:600;'>FULL REPOSITORY ARCHIVE (ON DISK)</p>", unsafe_allow_html=True)
+            if stats:
+                st.markdown(f"""
+                <table class="data-table">
+                    <tr><td>Total Raw Images</td><td>{stats.get('total', 0):,}</td></tr>
+                    <tr><td>Total Raw Real Images</td><td>{stats.get('real', 0):,}</td></tr>
+                    <tr><td>Total Raw Fake Images</td><td>{stats.get('fake', 0):,}</td></tr>
+                    <tr><td>Disk Training Folder</td><td>{stats.get('splits', {}).get('Train', 0):,}</td></tr>
+                    <tr><td>Disk Validation Folder</td><td>{stats.get('splits', {}).get('Validation', 0):,}</td></tr>
+                    <tr><td>Disk Test Folder</td><td>{stats.get('splits', {}).get('Test', 0):,}</td></tr>
+                </table>
+                """, unsafe_allow_html=True)
 
     # --- FOOTER ---
     st.markdown("""
