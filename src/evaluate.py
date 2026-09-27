@@ -41,25 +41,31 @@ def evaluate_model(model, dataloader, device, output_dir="results"):
             
     # Calculate metrics
     acc = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds)
-    recall = recall_score(all_labels, all_preds)
-    f1 = f1_score(all_labels, all_preds)
+    precision = precision_score(all_labels, all_preds, zero_division=0)
+    recall = recall_score(all_labels, all_preds, zero_division=0)
+    f1 = f1_score(all_labels, all_preds, zero_division=0)
     
-    cm = confusion_matrix(all_labels, all_preds)
+    cm = confusion_matrix(all_labels, all_preds, labels=[0, 1])
     tn, fp, fn, tp = cm.ravel()
     specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
     
-    roc_auc = roc_auc_score(all_labels, all_probs)
-    pr_auc = average_precision_score(all_labels, all_probs)
+    try:
+        roc_auc = roc_auc_score(all_labels, all_probs)
+    except Exception:
+        roc_auc = 0.5
+    try:
+        pr_auc = average_precision_score(all_labels, all_probs)
+    except Exception:
+        pr_auc = 0.5
     
     metrics = {
-        "accuracy": acc,
-        "precision": precision,
-        "recall": recall,
-        "f1_score": f1,
-        "specificity": specificity,
-        "roc_auc": roc_auc,
-        "pr_auc": pr_auc,
+        "accuracy": float(acc),
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1_score": float(f1),
+        "specificity": float(specificity),
+        "roc_auc": float(roc_auc),
+        "pr_auc": float(pr_auc),
         "confusion_matrix": {"TN": int(tn), "FP": int(fp), "FN": int(fn), "TP": int(tp)}
     }
     

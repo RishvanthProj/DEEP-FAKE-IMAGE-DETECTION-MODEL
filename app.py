@@ -346,8 +346,11 @@ def main():
 
         st.markdown("<div class='section-title'>FACE ANALYSIS</div>", unsafe_allow_html=True)
         if f_info["face_detected"]:
-            b = [int(x) for x in f_info["bbox"]]
-            st.markdown(f"Detected region: **x:** {b[0]} | **y:** {b[1]} | **width:** {b[2]-b[0]} | **height:** {b[3]-b[1]}")
+            if f_info.get("bbox") is not None:
+                b = [int(x) for x in f_info["bbox"]]
+                st.markdown(f"Detected region: **x:** {b[0]} | **y:** {b[1]} | **width:** {b[2]-b[0]} | **height:** {b[3]-b[1]}")
+            else:
+                st.markdown("Face detected (bbox not tracked in configuration).")
         else:
             st.markdown("No distinct face region identified.")
 

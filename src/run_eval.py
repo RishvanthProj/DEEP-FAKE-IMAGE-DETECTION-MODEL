@@ -33,7 +33,8 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
     
     model = get_model(pretrained=False, freeze_backbone=False)
-    model.load_state_dict(torch.load("models/best_model.pth", map_location=device, weights_only=True))
+    weights_path = "models/deepfake_resnext50_final.pth" if os.path.exists("models/deepfake_resnext50_final.pth") else "models/best_model.pth"
+    model.load_state_dict(torch.load(weights_path, map_location=device, weights_only=False))
     model.to(device)
     
     evaluate_model(model, test_loader, device)

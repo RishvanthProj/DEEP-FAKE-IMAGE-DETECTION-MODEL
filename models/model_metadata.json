@@ -1,0 +1,30 @@
+{
+    "architecture": "ResNeXt50_32x4d",
+    "class_mapping": {
+        "REAL": 0,
+        "FAKE": 1
+    },
+    "input_size": 224,
+    "normalization": {
+        "mean": [
+            0.485,
+            0.456,
+            0.406
+        ],
+        "std": [
+            0.229,
+            0.224,
+            0.225
+        ]
+    },
+    "training_dataset_path": "/Users/rishvantha/Downloads/Deepfake Dataset/Train",
+    "validation_dataset_path": "/Users/rishvantha/Downloads/Deepfake Dataset/Validation",
+    "test_dataset_path": "/Users/rishvantha/Downloads/Deepfake Dataset/Test",
+    "num_train": 4000,
+    "num_validation": 1000,
+    "num_test": 1000,
+    "seed": 42,
+    "optimizer": "Adam",
+    "learning_rate": 0.001,
+    "use_face_crop": false
+}

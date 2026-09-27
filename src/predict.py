@@ -76,6 +76,7 @@ class DeepfakePredictor:
                         
         face_info["faces_count"] = valid_faces
         face_info["confidence"] = float(best_prob) if best_box is not None else 0.0
+        face_info["bbox"] = best_box
         
         if valid_faces == 0:
             # STOP ANALYSIS! No human face.
@@ -91,11 +92,24 @@ class DeepfakePredictor:
         face_info["face_detected"] = True
         
         analysis_image = original_image
-        if self.use_face_crop:
-            face_crop, bbox = self.face_detector.get_primary_face_crop(original_image)
-            if face_crop is not None:
-                analysis_image = face_crop
-                face_info["bbox"] = bbox
+        img_w, img_h = original_image.size
+        
+        # If the image is a full photograph or selfie (larger than standard dataset crops ~300x300),
+        # extract the head/face region with natural margin matching dataset proportions
+        if best_box is not None and (img_w > 300 or img_h > 300):
+            bw = best_box[2] - best_box[0]
+            bh = best_box[3] - best_box[1]
+            if (bw / img_w) < 0.65 or (bh / img_h) < 0.65:
+                cx = (best_box[0] + best_box[2]) / 2.0
+                cy = (best_box[1] + best_box[3]) / 2.0
+                crop_size = max(bw, bh) / 0.45
+                half = crop_size / 2.0
+                x1 = max(0, int(cx - half))
+                y1 = max(0, int(cy - half))
+                x2 = min(img_w, int(cx + half))
+                y2 = min(img_h, int(cy + half))
+                if x2 > x1 and y2 > y1:
+                    analysis_image = original_image.crop((x1, y1, x2, y2))
                 
         # Preprocess
         input_tensor = process_image(analysis_image, transform_type='predict').to(self.device)

@@ -90,24 +90,42 @@ def main():
     # Dataset discovery
     import os
     import pandas as pd
-    # Always regenerate the manifest to ensure we are using the correct paths
-    logger.info("Discovering dataset and regenerating manifest...")
-    df = discover_dataset(args.train_dir, args.val_dir, args.test_dir)
+    manifest_file = "data/manifest.csv"
+    if os.path.exists(manifest_file):
+        logger.info(f"Loading cached dataset manifest from {manifest_file}...")
+        df = pd.read_csv(manifest_file)
+    else:
+        logger.info("Discovering dataset and generating manifest...")
+        df = discover_dataset(args.train_dir, args.val_dir, args.test_dir)
         
-    if df is None:
+    if df is None or len(df) == 0:
         logger.error("Failed to discover dataset.")
         return
         
-    # Smoke test limits
+    # Balanced sampling per split and label
     if args.smoke_test:
-        logger.info("SMOKE TEST MODE: Limiting dataset to 32 samples per split")
-        df = df.groupby('split').head(32).reset_index(drop=True)
+        logger.info("SMOKE TEST MODE: Limiting dataset to 32 balanced samples per split")
+        df = df.groupby(['split', 'label'], group_keys=False).apply(
+            lambda x: x.sample(n=min(len(x), 16), random_state=42)
+        ).reset_index(drop=True)
         args.epochs_head = 1
         args.epochs_finetune = 1
         args.batch_size = 4
     elif args.max_samples:
-        logger.info(f"Limiting dataset to {args.max_samples} samples per split")
-        df = df.groupby('split').apply(lambda x: x.sample(n=min(len(x), args.max_samples), random_state=42)).reset_index(drop=True)
+        logger.info(f"Limiting dataset to balanced samples (max {args.max_samples} total per split)")
+        train_per_class = max(1, args.max_samples // 2)
+        eval_per_class = min(500, train_per_class)
+        
+        train_sub = df[df['split'] == 'Train'].groupby('label', group_keys=False).apply(
+            lambda x: x.sample(n=min(len(x), train_per_class), random_state=42)
+        )
+        val_sub = df[df['split'] == 'Validation'].groupby('label', group_keys=False).apply(
+            lambda x: x.sample(n=min(len(x), eval_per_class), random_state=42)
+        )
+        test_sub = df[df['split'] == 'Test'].groupby('label', group_keys=False).apply(
+            lambda x: x.sample(n=min(len(x), eval_per_class), random_state=42)
+        )
+        df = pd.concat([train_sub, val_sub, test_sub]).reset_index(drop=True)
         
     train_df = df[df['split'] == 'Train']
     val_df = df[df['split'] == 'Validation']
@@ -202,7 +220,7 @@ def main():
         "validation_dataset_path": args.val_dir,
         "test_dataset_path": args.test_dir,
         "training_timestamp": time.time(),
-        "best_epoch": getattr(locals(), 'best_epoch_finetune', getattr(locals(), 'best_epoch_head', 0)),
+        "best_epoch": locals().get('best_epoch_finetune', locals().get('best_epoch_head', 0)),
         "num_train": len(train_df),
         "num_validation": len(val_df),
         "num_test": len(test_df),
