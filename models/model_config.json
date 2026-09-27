@@ -1,0 +1,8 @@
+{
+    "architecture": "ResNeXt50_32x4d",
+    "input_size": 224,
+    "classes": [
+        "REAL",
+        "FAKE"
+    ]
+}

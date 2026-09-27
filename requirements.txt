@@ -1,0 +1,12 @@
+torch
+torchvision
+numpy
+pandas
+scikit-learn
+opencv-python
+Pillow
+matplotlib
+plotly
+streamlit
+facenet-pytorch
+grad-cam
