@@ -6,3 +6,4 @@ temp_upload.jpg
 data/
 results/
 reports/
+.env

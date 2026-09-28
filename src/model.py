@@ -43,6 +43,23 @@ def set_parameter_requires_grad(model, feature_extracting):
         for param in model.backbone.parameters():
             param.requires_grad = True
 
+def set_fine_tune_layers(model, unfreeze_layer4_only=True):
+    """
+    Unfreezes layer4 and classifier for fast, stable transfer learning on Apple Silicon.
+    """
+    for param in model.backbone.parameters():
+        param.requires_grad = False
+        
+    if unfreeze_layer4_only:
+        for param in model.backbone.layer4.parameters():
+            param.requires_grad = True
+    else:
+        for param in model.backbone.parameters():
+            param.requires_grad = True
+            
+    for param in model.classifier.parameters():
+        param.requires_grad = True
+
 def get_model(pretrained=True, freeze_backbone=True):
     model = DeepfakeDetectorModel(pretrained=pretrained)
     

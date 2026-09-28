@@ -12,10 +12,51 @@ import numpy as np
 from src.utils import set_seed, get_device, setup_logging, save_json
 from src.dataset import discover_dataset
 from src.preprocessing import get_train_transforms, get_eval_transforms, DeepfakeDataset
-from src.model import get_model, set_parameter_requires_grad
+from src.model import get_model, set_parameter_requires_grad, set_fine_tune_layers
 from src.face_detection import FaceDetector
 
 logger = setup_logging()
+
+def calibrate_model(model, val_loader, device):
+    logger.info("Computing validation calibration and optimal operating threshold...")
+    model.eval()
+    all_logits = []
+    all_labels = []
+    with torch.no_grad():
+        for inputs, labels, _ in val_loader:
+            inputs = inputs.to(device)
+            logits = model(inputs)
+            all_logits.append(logits.cpu())
+            all_labels.append(labels)
+    all_logits = torch.cat(all_logits, dim=0)
+    all_labels = torch.cat(all_labels, dim=0).numpy()
+    
+    # Temperature grid search (minimize NLL on validation set)
+    best_nll = float('inf')
+    best_t = 1.15
+    for t in np.linspace(0.8, 2.0, 25):
+        probs = F.softmax(all_logits / t, dim=1).numpy()
+        eps = 1e-7
+        probs = np.clip(probs, eps, 1.0 - eps)
+        nll = -np.mean(np.log(probs[np.arange(len(all_labels)), all_labels]))
+        if nll < best_nll:
+            best_nll = nll
+            best_t = float(t)
+            
+    # Optimal operating threshold search on validation set
+    from sklearn.metrics import f1_score
+    cal_probs = F.softmax(all_logits / best_t, dim=1)[:, 1].numpy()
+    best_f1 = 0.0
+    best_th = 0.52
+    for th in np.linspace(0.40, 0.65, 26):
+        preds = (cal_probs >= th).astype(int)
+        f1 = f1_score(all_labels, preds, zero_division=0)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_th = float(th)
+            
+    logger.info(f"Calibration Complete: Temperature={best_t:.3f}, Operating Threshold={best_th:.3f} (Val F1={best_f1:.4f})")
+    return best_t, best_th
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
@@ -146,7 +187,7 @@ def main():
     
     face_detector = FaceDetector(device=device) if args.use_face_crop else None
     
-    train_dataset = DeepfakeDataset(train_df, transform=get_train_transforms(), use_face_crop=args.use_face_crop, face_detector=face_detector)
+    train_dataset = DeepfakeDataset(train_df, transform=get_train_transforms(), use_face_crop=args.use_face_crop, face_detector=face_detector, robust_augment_real=True)
     val_dataset = DeepfakeDataset(val_df, transform=get_eval_transforms(), use_face_crop=args.use_face_crop, face_detector=face_detector)
     
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
@@ -157,7 +198,7 @@ def main():
     
     # Phase 1: Train Head
     optimizer = optim.Adam(model.classifier.parameters(), lr=args.lr, weight_decay=1e-3)
-    logger.info("Phase 1: Training Classification Head")
+    logger.info("Phase 1: Training Classification Head with Smartphone Hard-Negative Augmentations")
     
     best_val_loss = float('inf')
     history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
@@ -179,35 +220,41 @@ def main():
             best_epoch_head = epoch
             os.makedirs("models", exist_ok=True)
             torch.save(model.state_dict(), "models/deepfake_resnext50_final.pth")
+            torch.save(model.state_dict(), "models/deepfake_resnext50_robust.pth")
             logger.info("Saved best model.")
 
-    # Phase 2: Fine-Tuning
-    logger.info("Phase 2: Fine-tuning entire model")
-    set_parameter_requires_grad(model, feature_extracting=False)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr_finetune, weight_decay=1e-3)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=2, factor=0.5)
-    
-    for epoch in range(args.epochs_finetune):
-        t0 = time.time()
-        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = evaluate(model, val_loader, criterion, device)
-        scheduler.step(val_loss)
+    # Phase 2: Fine-Tuning Layer 4 and Head (Stable on Apple Silicon MPS)
+    if args.epochs_finetune > 0:
+        logger.info("Phase 2: Fine-tuning layer4 + classification head")
+        set_fine_tune_layers(model, unfreeze_layer4_only=True)
+        optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr_finetune, weight_decay=1e-4)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=1, factor=0.5)
         
-        history['train_loss'].append(train_loss)
-        history['val_loss'].append(val_loss)
-        history['train_acc'].append(train_acc)
-        history['val_acc'].append(val_acc)
-        
-        logger.info(f"Fine-tune Epoch {epoch+1}/{args.epochs_finetune} | Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} | Time: {time.time()-t0:.1f}s")
-        
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_epoch_finetune = epoch
-            torch.save(model.state_dict(), "models/deepfake_resnext50_final.pth")
-            logger.info("Saved best model.")
+        for epoch in range(args.epochs_finetune):
+            t0 = time.time()
+            train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
+            val_loss, val_acc = evaluate(model, val_loader, criterion, device)
+            scheduler.step(val_loss)
+            
+            history['train_loss'].append(train_loss)
+            history['val_loss'].append(val_loss)
+            history['train_acc'].append(train_acc)
+            history['val_acc'].append(val_acc)
+            
+            logger.info(f"Fine-tune Epoch {epoch+1}/{args.epochs_finetune} | Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} | Time: {time.time()-t0:.1f}s")
+            
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_epoch_finetune = epoch
+                torch.save(model.state_dict(), "models/deepfake_resnext50_final.pth")
+                torch.save(model.state_dict(), "models/deepfake_resnext50_robust.pth")
+                logger.info("Saved best model.")
 
     # Save configs and metrics
     save_json(history, "results/training_history.json")
+    
+    # Run validation calibration
+    val_temp, optimal_thresh = calibrate_model(model, val_loader, device)
     
     test_df = df[df['split'] == 'Test']
     
@@ -229,7 +276,9 @@ def main():
         "learning_rate": args.lr,
         "weight_decay": 1e-3,
         "batch_size": args.batch_size,
-        "use_face_crop": args.use_face_crop
+        "use_face_crop": args.use_face_crop,
+        "temperature": val_temp,
+        "optimal_threshold": optimal_thresh
     }
     save_json(model_metadata, "models/model_metadata.json")
     save_json({"0": "REAL", "1": "FAKE"}, "models/class_mapping.json")
